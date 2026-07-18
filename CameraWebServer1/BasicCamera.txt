@@ -1,0 +1,220 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <WiFiClientSecure.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include <ArduinoJson.h>
+#include <esp_camera.h>
+
+// ================= CẤU HÌNH WIFI & SERVER =================
+const char* ssid = "Phuc Ngo";
+const char* password = "aimabiet126";
+const char* server_url = "https://server-esp32-cam.onrender.com/api/recognize";
+
+unsigned long last_capture_time = 0;
+const unsigned long cooldown_time = 10000; // 10 giây
+
+// ================= ĐỊNH NGHĨA CHÂN =================
+#define PIN_RELAY_BASE 12   
+#define PIN_LDR        13   
+#define PIN_LED        2    
+#define PIN_SDA        14   
+#define PIN_SCL        15   
+
+// LCD 20x4
+LiquidCrystal_I2C lcd(0x27, 20, 4);
+
+// ================= CẤU HÌNH CAMERA =================
+#define PWDN_GPIO_NUM   32
+#define RESET_GPIO_NUM -1
+#define XCLK_GPIO_NUM    0
+#define SIOD_GPIO_NUM   26
+#define SIOC_GPIO_NUM   27
+#define Y9_GPIO_NUM     35
+#define Y8_GPIO_NUM     34
+#define Y7_GPIO_NUM     39
+#define Y6_GPIO_NUM     36
+#define Y5_GPIO_NUM     21
+#define Y4_GPIO_NUM     19
+#define Y3_GPIO_NUM     18
+#define Y2_GPIO_NUM      5
+#define VSYNC_GPIO_NUM  25
+#define HREF_GPIO_NUM   23
+#define PCLK_GPIO_NUM   22
+
+void initCamera() {
+  camera_config_t config;
+  config.ledc_channel = LEDC_CHANNEL_0;
+  config.ledc_timer = LEDC_TIMER_0;
+  config.pin_d0 = Y2_GPIO_NUM;
+  config.pin_d1 = Y3_GPIO_NUM;
+  config.pin_d2 = Y4_GPIO_NUM;
+  config.pin_d3 = Y5_GPIO_NUM;
+  config.pin_d4 = Y6_GPIO_NUM;
+  config.pin_d5 = Y7_GPIO_NUM;
+  config.pin_d6 = Y8_GPIO_NUM;
+  config.pin_d7 = Y9_GPIO_NUM;
+  config.pin_xclk = XCLK_GPIO_NUM;
+  config.pin_pclk = PCLK_GPIO_NUM;
+  config.pin_vsync = VSYNC_GPIO_NUM;
+  config.pin_href = HREF_GPIO_NUM;
+  config.pin_sscb_sda = SIOD_GPIO_NUM;
+  config.pin_sscb_scl = SIOC_GPIO_NUM;
+  config.pin_pwdn = PWDN_GPIO_NUM;
+  config.pin_reset = RESET_GPIO_NUM;
+  
+  // Cấu hình siêu cơ bản
+  config.xclk_freq_hz = 20000000; 
+  config.pixel_format = PIXFORMAT_JPEG;
+  config.frame_size = FRAMESIZE_VGA;
+  config.jpeg_quality = 12;
+  config.fb_count = 1;
+
+  esp_err_t err = esp_camera_init(&config);
+  if (err != ESP_OK) {
+    Serial.printf("Init Camera failed: 0x%x\n", err);
+    lcd.clear(); lcd.setCursor(0,0); lcd.print("Cam Init Fail");
+  } else {
+    Serial.println("Camera Init OK");
+  }
+}
+
+void testServerConnection() {
+  lcd.clear(); lcd.setCursor(0,0); lcd.print("Checking Server");
+  WiFiClientSecure client;
+  client.setInsecure();
+  client.setHandshakeTimeout(10000);
+  
+  HTTPClient http;
+  http.setTimeout(10000);
+  
+  String ping_url = "https://server-esp32-cam.onrender.com/api/ping";
+  http.begin(client, ping_url);
+  int httpCode = http.GET();
+  
+  if (httpCode == 200) {
+    Serial.println("Server OK");
+    lcd.clear(); lcd.setCursor(0,0); lcd.print("Server OK");
+  } else {
+    Serial.println("Server Fail");
+    lcd.clear(); lcd.setCursor(0,0); lcd.print("Server Fail");
+  }
+  http.end();
+  delay(1000);
+}
+
+void sendImageToServer() {
+  digitalWrite(PIN_LED, HIGH);
+  lcd.clear(); lcd.setCursor(0, 0); 
+  lcd.print("Analyzing...");
+
+  camera_fb_t *fb = esp_camera_fb_get();
+  if (!fb) {
+    Serial.println("Camera DMA Failed");
+    lcd.clear(); lcd.setCursor(0,0); lcd.print("Cam DMA Error");
+    digitalWrite(PIN_LED, LOW);
+    delay(2000);
+    lcd.clear(); lcd.setCursor(0,0); lcd.print("System Ready");
+    return;
+  }
+
+  WiFiClientSecure client;
+  client.setInsecure();
+  client.setHandshakeTimeout(15000);
+
+  HTTPClient http;
+  http.setTimeout(15000);
+  http.begin(client, server_url);
+
+  String boundary = "----ESP32CAMBoundary";
+  String head = "--" + boundary + "\r\nContent-Disposition: form-data; name=\"image\"; filename=\"capture.jpg\"\r\nContent-Type: image/jpeg\r\n\r\n";
+  String tail = "\r\n--" + boundary + "--\r\n";
+  size_t totalLen = head.length() + fb->len + tail.length();
+
+  uint8_t *buf = (uint8_t *)malloc(totalLen);
+  if (!buf) {
+    Serial.println("Malloc Failed");
+    lcd.clear(); lcd.setCursor(0,0); lcd.print("RAM Error");
+    esp_camera_fb_return(fb);
+    digitalWrite(PIN_LED, LOW);
+    delay(2000);
+    lcd.clear(); lcd.setCursor(0,0); lcd.print("System Ready");
+    return;
+  }
+
+  memcpy(buf, head.c_str(), head.length());
+  memcpy(buf + head.length(), fb->buf, fb->len);
+  memcpy(buf + head.length() + fb->len, tail.c_str(), tail.length());
+
+  http.addHeader("Content-Type", "multipart/form-data; boundary=" + boundary);
+  int httpResponseCode = http.POST(buf, totalLen);
+
+  if (httpResponseCode > 0) {
+    String response = http.getString();
+    StaticJsonDocument<200> doc;
+    if (!deserializeJson(doc, response)) {
+      bool is_match = doc["match"];
+      if (is_match) {
+        lcd.clear(); lcd.setCursor(0,0); lcd.print("MATCH! DOOR OPEN");
+        digitalWrite(PIN_RELAY_BASE, HIGH);
+        delay(3000); // Mở cửa 3 giây
+        digitalWrite(PIN_RELAY_BASE, LOW);
+      } else {
+        lcd.clear(); lcd.setCursor(0,0); lcd.print("UNKNOWN PERSON");
+      }
+    }
+  } else {
+    lcd.clear(); lcd.setCursor(0,0); lcd.print("API Error");
+  }
+
+  http.end();
+  free(buf);
+  esp_camera_fb_return(fb);
+  
+  digitalWrite(PIN_LED, LOW);
+  delay(1500);
+  lcd.clear(); lcd.setCursor(0,0); lcd.print("System Ready");
+}
+
+void setup() {
+  Serial.begin(115200);
+  
+  pinMode(PIN_RELAY_BASE, OUTPUT);
+  pinMode(PIN_LED, OUTPUT);
+  pinMode(PIN_LDR, INPUT);
+  digitalWrite(PIN_RELAY_BASE, LOW);
+  digitalWrite(PIN_LED, LOW);
+
+  Wire.begin(PIN_SDA, PIN_SCL);
+  lcd.init(); lcd.backlight();
+  lcd.setCursor(0,0); lcd.print("Booting up...");
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+  }
+  lcd.clear(); lcd.setCursor(0,0); lcd.print("WiFi Connected");
+  delay(1000);
+
+  testServerConnection();
+  
+  // Khởi tạo Camera cuối cùng
+  initCamera();
+
+  lcd.clear(); lcd.setCursor(0,0); lcd.print("System Ready");
+}
+
+void loop() {
+  int ldr_state = digitalRead(PIN_LDR);
+  unsigned long current_time = millis();
+
+  // Chỉ chụp ảnh khi LDR bị che
+  if (ldr_state == LOW) {
+    if (current_time - last_capture_time >= cooldown_time) {
+      last_capture_time = current_time;
+      sendImageToServer();
+    }
+  }
+  delay(100);
+}
