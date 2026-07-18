@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESP32-CAM Face Scan History</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <header class="header">
+            <div class="logo">
+                <div class="logo-icon">5AT</div>
+                <h1>Face Scan <span>History Log</span></h1>
+            </div>
+            <div class="status-indicator" style="display: flex; gap: 15px;">
+                <div id="serverStatus"><span class="pulse" id="serverPulse"></span> Server: Loading...</div>
+                <div id="esp32Status"><span class="pulse" id="esp32Pulse"></span> ESP32: Loading...</div>
+            </div>
+        </header>
+
+        <main class="main-content">
+            <div class="card glass">
+                <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+                    <div style="display: flex; align-items: center; gap: 15px;">
+                        <h2>Scan History</h2>
+                        <select id="dateFilter" class="btn" style="padding: 5px 10px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); color: white; border-radius: 5px;">
+                            <option value="">All Days</option>
+                        </select>
+                    </div>
+                    <button id="refreshBtn" class="btn">
+                        <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+                        Refresh
+                    </button>
+                </div>
+                
+                <div class="table-container">
+                    <table class="history-table">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Time</th>
+                                <th>Image</th>
+                                <th>Status</th>
+                                <th>Confidence</th>
+                                <th>Latency</th>
+                                <th>Message</th>
+                            </tr>
+                        </thead>
+                        <tbody id="historyBody">
+                            <!-- Data will be populated here via JS -->
+                            <tr>
+                                <td colspan="6" class="text-center loading-text">Loading history...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Image Modal -->
+    <div id="imageModal" class="modal">
+        <div class="modal-content glass">
+            <span class="close-btn">&times;</span>
+            <img id="modalImg" src="" alt="Captured Image">
+            <div class="modal-caption" id="modalCaption"></div>
+        </div>
+    </div>
+
+    <script src="/static/js/main.js"></script>
+</body>
+</html>
